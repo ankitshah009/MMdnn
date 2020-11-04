@@ -47,7 +47,7 @@ from caffe import to_proto
 from six import text_type as _text_type
 
 
-__weights_dict = dict()
+_weights_dict = dict()
 
 def load_weights(weight_file):
     if weight_file == None:
@@ -75,25 +75,25 @@ def make_net(prototxt):
         print(n.to_proto(), file=fpb)
 
 def gen_weight(weight_file, model, prototxt):
-    global __weights_dict
-    __weights_dict = load_weights(weight_file)
+    global _weights_dict
+    _weights_dict = load_weights(weight_file)
 
     net = caffe.Net(prototxt, caffe.TRAIN)
 
-    for key in __weights_dict:
-        if 'weights' in __weights_dict[key]:
-            net.params[key][0].data.flat = __weights_dict[key]['weights']
-        elif 'mean' in __weights_dict[key]:
-            net.params[key][0].data.flat = __weights_dict[key]['mean']
-            net.params[key][1].data.flat = __weights_dict[key]['var']
-            if 'scale' in __weights_dict[key]:
-                net.params[key][2].data.flat = __weights_dict[key]['scale']
-        elif 'scale' in __weights_dict[key]:
-            net.params[key][0].data.flat = __weights_dict[key]['scale']
-        if 'bias' in __weights_dict[key]:
-            net.params[key][1].data.flat = __weights_dict[key]['bias']
-        if 'gamma' in __weights_dict[key]: # used for prelu, not sure if other layers use this too
-            net.params[key][0].data.flat = __weights_dict[key]['gamma']
+    for key in _weights_dict:
+        if 'weights' in _weights_dict[key]:
+            net.params[key][0].data.flat = _weights_dict[key]['weights']
+        elif 'mean' in _weights_dict[key]:
+            net.params[key][0].data.flat = _weights_dict[key]['mean']
+            net.params[key][1].data.flat = _weights_dict[key]['var']
+            if 'scale' in _weights_dict[key]:
+                net.params[key][2].data.flat = _weights_dict[key]['scale']
+        elif 'scale' in _weights_dict[key]:
+            net.params[key][0].data.flat = _weights_dict[key]['scale']
+        if 'bias' in _weights_dict[key]:
+            net.params[key][1].data.flat = _weights_dict[key]['bias']
+        if 'gamma' in _weights_dict[key]: # used for prelu, not sure if other layers use this too
+            net.params[key][0].data.flat = _weights_dict[key]['gamma']
     net.save(model)
     return net
 
@@ -606,12 +606,33 @@ if __name__=='__main__':
     def emit_ReduceSum(self, IR_node):
         self.reduction(IR_node, 1, IR_node.get_attr('axes'))
 
-    def emit_Relu6(self, IR_node):
+    def get_layer_list(self):
+        try:
+            from caffe.proto import caffe_pb2
+            layer = caffe_pb2.LayerParameter()
+            param_list = [f.name for f in layer.DESCRIPTOR.fields if f.name.endswith('_param')]
+            layer_list = [type(getattr(layer, s)).__name__ for s in param_list]
+            layer_list = [s[:-len('Parameter')] for s in layer_list]
+            return layer_list
+        except:
+            return []
+
+    def clip_exists(self):
+        layer_list = self.get_layer_list()
+        return 'Clip' in layer_list
+
+    def emit_Relu6Clip(self, IR_node):
         in_place = True
         self.add_body(1, "n.{:<15} = L.Clip(n.{}, min=0, max=6, in_place={}, ntop=1)".format(
             IR_node.variable_name,
             self.parent_variable_name(IR_node),
             in_place))
+
+    def emit_Relu6(self, IR_node):
+        if self.clip_exists():
+            self.emit_Relu6Clip(IR_node)
+        else:
+            self.emit_Relu(IR_node)
 
     def emit_DepthwiseConv(self, IR_node):
         self.emit_Conv(IR_node)
